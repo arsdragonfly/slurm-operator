@@ -23,6 +23,7 @@ primitives. For design-level details, see
   - [External Drain Preservation](#external-drain-preservation)
   - [External Health Checker Integration Pattern](#external-health-checker-integration-pattern)
   - [Node Identity](#node-identity)
+    - [Naming Conventions](#naming-conventions)
     - [DaemonSet Mode](#daemonset-mode)
     - [StatefulSet Mode](#statefulset-mode)
       - [Node Pinning](#node-pinning)
@@ -306,17 +307,28 @@ See [Override with Node Annotation](#override-with-node-annotation) and
 A NodeSet's `scalingMode` determines whether its Pods, which represent Slurm
 nodes, are loosely or strictly mapped to the Kubernetes Nodes they run on.
 
+### Naming Conventions
+
+Slurm node names follow one of two conventions:
+
+- **Node-derived naming:** the Kubernetes Node's
+  `nodeset.slinky.slurm.net/hostname-override` value, if set, otherwise the Node
+  name up to the first dot.
+- **Pod-hostname naming:** the Pod template hostname prefix plus ordinal, or the
+  Pod name if no prefix is set. StatefulSet workers using host networking use the
+  Kubernetes Node name instead.
+
 ### DaemonSet Mode
 
 When using `scalingMode=DaemonSet`, NodeSet Pods are strictly mapped to
-Kubernetes Nodes. Their hostname is the Node's
-`nodeset.slinky.slurm.net/hostname-override` value, if set, otherwise the Node
-name up to the first dot.
+Kubernetes Nodes and always use [Node-derived naming](#naming-conventions) for
+their hostname and Slurm node name.
 
 ### StatefulSet Mode
 
 When using `scalingMode=StatefulSet`, NodeSet Pods may be loosely mapped to
-Kubernetes Nodes and may be rescheduled freely.
+Kubernetes Nodes and may be rescheduled freely. They use
+[Pod-hostname naming](#naming-conventions) by default.
 
 If a stricter node mapping is preferred, node pinning can be enabled on the
 NodeSet.
@@ -363,21 +375,18 @@ With node pinning enabled:
 
 ##### Kubernetes Node Names in Slurm
 
-Pinning controls placement; `spec.preferKubernetesNodeName: true` also lets pinned
-StatefulSet workers register in Slurm using the Node's hostname override or
-short name instead of the Pod hostname. This boolean defaults to `false` when
-omitted or set to YAML `null`. Node-derived naming requires both
-`pinToNode: true` and `oversubscribeNode: false`.
+Pinning controls placement; setting `spec.preferKubernetesNodeName` to `true`
+selects [Node-derived naming](#naming-conventions) for pinned StatefulSet workers.
+This boolean defaults to `false` when omitted or set to YAML `null`. The
+preference takes effect only with both `pinToNode: true` and
+`oversubscribeNode: false`.
 
 These fields can be set on the NodeSet's `spec` or its entry in the Slurm Helm
 chart's `nodesets` map. Disabling pinning or enabling oversubscription falls back
-to Pod-hostname naming: the Pod template hostname prefix plus ordinal, or the Pod
-name if no prefix is set.
+to Pod-hostname naming.
 
-With Node-derived naming enabled, the operator passes the Node's hostname
-override or short name explicitly to slurmd. Resolved names must be valid Pod
-hostnames (a DNS label of at most 63 characters). The binding webhook rejects
-invalid names before the Pod starts.
+Resolved names must be valid Pod hostnames (a DNS label of at most 63 characters).
+The binding webhook rejects invalid names before the Pod starts.
 
 During autoscaling, worker Pods can wait for Nodes that do not exist yet. Their
 Slurm names remain unresolved until binding; unresolved workers are excluded
