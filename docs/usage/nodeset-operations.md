@@ -363,27 +363,16 @@ With node pinning enabled:
 
 ##### Kubernetes Node Names in Slurm
 
-Pinning controls placement; `spec.preferKubernetesNodeName` also lets pinned
+Pinning controls placement; `spec.preferKubernetesNodeName: true` also lets pinned
 StatefulSet workers register in Slurm using the Node's hostname override or
 short name instead of the Pod hostname. This boolean defaults to `false` when
 omitted or set to YAML `null`. Node-derived naming requires both
 `pinToNode: true` and `oversubscribeNode: false`.
 
-To use the same Node-derived naming rule as DaemonSet mode while retaining
-replica-based scaling:
-
-```yaml
-nodesets:
-  slinky:
-    scalingMode: StatefulSet
-    preferKubernetesNodeName: true
-    pinToNode: true
-    oversubscribeNode: false
-```
-
-These fields can also be set directly on the NodeSet's `spec`. Disabling pinning
-or enabling oversubscription falls back to Pod-hostname naming: the Pod template
-hostname prefix plus ordinal, or the Pod name if no prefix is set.
+These fields can be set on the NodeSet's `spec` or its entry in the Slurm Helm
+chart's `nodesets` map. Disabling pinning or enabling oversubscription falls back
+to Pod-hostname naming: the Pod template hostname prefix plus ordinal, or the Pod
+name if no prefix is set.
 
 With Node-derived naming enabled, the operator passes the Node's hostname
 override or short name explicitly to slurmd. Resolved names must be valid Pod
