@@ -280,7 +280,7 @@ func (r *realSlurmControl) MakeNodeDrain(ctx context.Context, nodeset *slinkyv1b
 		return ErrNoSlurmClient
 	}
 
-	slurmNode, err := getSlurmNodeForPod(ctx, slurmClient, pod)
+	slurmNode, err := getSlurmNodeForPod(ctx, slurmClient, pod, &slurmclient.GetOptions{SkipCache: true})
 	if err != nil {
 		return err
 	}

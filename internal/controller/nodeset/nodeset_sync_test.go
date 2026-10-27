@@ -1145,6 +1145,84 @@ func isNodeDrain(ctx context.Context, slurmClient slurmclient.Client, pod *corev
 	return isDrain, nil
 }
 
+func TestProcessCondemnedReconcilesStaleDrainState(t *testing.T) {
+	for _, test := range []struct {
+		name        string
+		cacheMiss   bool
+		liveState   slurmapi.V0044NodeState
+		liveReadErr error
+	}{
+		{name: "cache miss with live idle worker", cacheMiss: true, liveState: slurmapi.V0044NodeStateIDLE},
+		{name: "cache miss with live busy worker", cacheMiss: true, liveState: slurmapi.V0044NodeStateMIXED},
+		{name: "stale drained cache with live idle worker", liveState: slurmapi.V0044NodeStateIDLE},
+		{name: "stale drained cache with live busy worker", liveState: slurmapi.V0044NodeStateMIXED},
+		{name: "live lookup failure remains protected", cacheMiss: true, liveReadErr: http.ErrHandlerTimeout},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			ctx := t.Context()
+			nodeset := newNodeSet("workers", "slurm", 0)
+			pod := &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "workers-0", Namespace: nodeset.Namespace,
+					Labels: map[string]string{
+						slinkyv1beta1.LabelNodeSetSlurmNodeNameMode: string(slinkyv1beta1.SlurmNodeNameModeKubernetesNode),
+						slinkyv1beta1.LabelNodeSetPodHostname:       "worker-a",
+					},
+				},
+				Spec:   corev1.PodSpec{NodeName: "worker-a", Hostname: "workers-0"},
+				Status: corev1.PodStatus{Phase: corev1.PodRunning},
+			}
+			kubeClient := fake.NewFakeClient(nodeset, pod)
+			liveState := []slurmapi.V0044NodeState{test.liveState}
+			drains := 0
+			reason := slurmcontrol.FormatNodeReason("Pod (default/workers-0) is pending termination for scale-in")
+			slurmClient := newFakeClientList(sinterceptor.Funcs{
+				Get: func(_ context.Context, key slurmobject.ObjectKey, object slurmobject.Object, opts ...slurmclient.GetOption) error {
+					require.Equal(t, slurmobject.ObjectKey("worker-a"), key)
+					options := (&slurmclient.GetOptions{}).ApplyOptions(opts)
+					node := object.(*slurmapi.V0044Node)
+					node.Name = ptr.To("worker-a")
+					if !options.SkipCache {
+						if test.cacheMiss {
+							return slurmerrors.ErrNotFound
+						}
+						node.State = ptr.To([]slurmapi.V0044NodeState{slurmapi.V0044NodeStateDRAIN})
+						node.Reason = ptr.To(reason)
+						return nil
+					}
+					if test.liveReadErr != nil {
+						return test.liveReadErr
+					}
+					node.State = ptr.To(liveState)
+					return nil
+				},
+				Update: func(_ context.Context, _ slurmobject.Object, request any, _ ...slurmclient.UpdateOption) error {
+					update, ok := request.(slurmapi.V0044UpdateNodeMsg)
+					require.True(t, ok)
+					require.Equal(t, []slurmapi.V0044UpdateNodeMsgState{slurmapi.V0044UpdateNodeMsgStateDRAIN}, *update.State)
+					drains++
+					return nil
+				},
+			})
+			reconciler := newNodeSetController(kubeClient, newClientMap("slurm", slurmClient))
+			err := reconciler.processCondemned(ctx, nodeset, []*corev1.Pod{pod}, 0)
+			current := &corev1.Pod{}
+			require.NoError(t, kubeClient.Get(ctx, client.ObjectKeyFromObject(pod), current))
+			if test.liveReadErr != nil {
+				require.ErrorIs(t, err, test.liveReadErr)
+				require.Zero(t, drains)
+				return
+			}
+			require.NoError(t, err)
+			require.Equal(t, 1, drains)
+			require.True(t, podutils.IsPodCordon(current))
+			liveState = []slurmapi.V0044NodeState{slurmapi.V0044NodeStateDRAIN}
+			require.NoError(t, reconciler.processCondemned(ctx, nodeset, []*corev1.Pod{current}, 0))
+			require.True(t, apierrors.IsNotFound(kubeClient.Get(ctx, client.ObjectKeyFromObject(pod), &corev1.Pod{})))
+		})
+	}
+}
+
 func TestNodeSetReconciler_processCondemned(t *testing.T) {
 	controller := &slinkyv1beta1.Controller{
 		ObjectMeta: metav1.ObjectMeta{
