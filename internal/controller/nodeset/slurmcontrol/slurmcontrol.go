@@ -96,11 +96,11 @@ type realSlurmControl struct {
 func getSlurmNodeForPod(ctx context.Context, slurmClient slurmclient.Client, pod *corev1.Pod, opts ...slurmclient.GetOption) (*slurmapi.V0044Node, error) {
 	name := nodesetutils.GetSlurmNodeName(pod)
 	if name == "" {
-		return nil, slurmerrors.ErrNotFound
+		return nil, fmt.Errorf("unresolved Slurm node name for Pod %s/%s: %w", pod.Namespace, pod.Name, slurmerrors.ErrNotFound)
 	}
 	node := &slurmapi.V0044Node{}
 	if err := slurmClient.Get(ctx, slurmobject.ObjectKey(name), node, opts...); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("get Slurm node %q for Pod %s/%s: %w", name, pod.Namespace, pod.Name, err)
 	}
 	return node, nil
 }

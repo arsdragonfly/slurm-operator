@@ -775,6 +775,10 @@ func (r *NodeSetReconciler) syncSlurmNodeRecordsAutoForInvalidReg(
 			if errors.Is(err, slurmcontrol.ErrNoSlurmClient) {
 				return nil
 			}
+			if errors.Is(err, slurmerrors.ErrNotFound) {
+				logger.V(2).Info("Waiting for Slurm node registration or cache refresh", "pod", klog.KObj(pod))
+				return nil
+			}
 			return err
 		}
 		if !isInvalidReg {

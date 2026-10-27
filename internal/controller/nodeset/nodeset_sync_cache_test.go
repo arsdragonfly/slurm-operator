@@ -24,6 +24,7 @@ import (
 
 	slurmapi "github.com/SlinkyProject/slurm-client/api/v0044"
 	slurmclient "github.com/SlinkyProject/slurm-client/pkg/client"
+	slurminterceptor "github.com/SlinkyProject/slurm-client/pkg/client/interceptor"
 	"github.com/SlinkyProject/slurm-client/pkg/client/token"
 	slurmerrors "github.com/SlinkyProject/slurm-client/pkg/errors"
 	slurmobject "github.com/SlinkyProject/slurm-client/pkg/object"
@@ -31,6 +32,27 @@ import (
 	slinkyv1beta1 "github.com/SlinkyProject/slurm-operator/api/v1beta1"
 	"github.com/SlinkyProject/slurm-operator/internal/utils/podutils"
 )
+
+func TestAutoPruningWaitsForNewWorkerRegistration(t *testing.T) {
+	nodeset := newNodeSet("workers", "slurm", 1)
+	nodeset.Spec.PruneSlurmNodeRecords = slinkyv1beta1.NodeSetPruneNodeRecordTypeAuto
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "workers-0", Namespace: nodeset.Namespace,
+			Labels: map[string]string{
+				slinkyv1beta1.LabelNodeSetSlurmNodeNameMode: string(slinkyv1beta1.SlurmNodeNameModeKubernetesNode),
+				slinkyv1beta1.LabelNodeSetPodHostname:       "worker-a",
+			},
+		},
+		Spec:   corev1.PodSpec{NodeName: "worker-a", Hostname: "workers-0"},
+		Status: corev1.PodStatus{Phase: corev1.PodRunning},
+	}
+	kubeClient := fake.NewFakeClient(nodeset, pod)
+	slurmClient := newFakeClientList(slurminterceptor.Funcs{}, &slurmapi.V0044NodeObjectList{})
+	reconciler := newNodeSetController(kubeClient, newClientMap("slurm", slurmClient))
+	require.NoError(t, reconciler.syncSlurmNodeRecords(t.Context(), nodeset, []*corev1.Pod{pod}))
+	require.NoError(t, kubeClient.Get(t.Context(), client.ObjectKeyFromObject(pod), &corev1.Pod{}))
+}
 
 func TestProcessCondemnedNewRegistrationWithRealCache(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
